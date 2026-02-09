@@ -79,6 +79,22 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--cov=core --cov=modules --cov=cli --cov=api --cov-report=html --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["core", "modules", "cli", "api", "dashboard"]
+omit = ["*/tests/*", "*/__pycache__/*", "*/venv/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+precision = 2
 
 [tool.mypy]
 python_version = "3.10"

@@ -1,5 +1,9 @@
 # Security Suite
 
+[![CI](https://github.com/53cur3dL34rn/security-suite/actions/workflows/ci.yml/badge.svg)](https://github.com/53cur3dL34rn/security-suite/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+
 A comprehensive open-source security tools suite for OSINT reconnaissance, web security testing, API security assessment, and compliance checking with AI-powered analysis.
 
 ## Features

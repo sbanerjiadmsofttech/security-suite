@@ -73,6 +73,7 @@ TIPS = [
     "API security testing: [cyan]secsuite api scan <openapi-spec>[/cyan]",
     "The dashboard provides real-time visualization at [cyan]localhost:8080[/cyan]",
     "Use [cyan]secsuite ai correlate <target>[/cyan] to find attack chains",
+    "Ubuntu system hardening audit: [cyan]secsuite audit run[/cyan] → [cyan]secsuite audit remediate[/cyan]",
 ]
 
 
@@ -150,6 +151,7 @@ schedule_app = typer.Typer(help="Scheduled scans")
 vuln_app = typer.Typer(help="Network vulnerability scanner (Al-VulnScan + Automated_VAPT)")
 threat_app = typer.Typer(help="IP threat intelligence (VirusTotal · AbuseIPDB · Shodan · OTX · GreyNoise)")
 password_app = typer.Typer(help="Password strength audit and generation")
+audit_app = typer.Typer(help="Ubuntu 24.04 LTS security audit and LLM-driven remediation")
 
 app.add_typer(osint_app, name="osint")
 app.add_typer(scan_app, name="scan")
@@ -163,6 +165,7 @@ app.add_typer(schedule_app, name="schedule")
 app.add_typer(vuln_app, name="vuln")
 app.add_typer(threat_app, name="threat")
 app.add_typer(password_app, name="password")
+app.add_typer(audit_app, name="audit")
 
 
 def run_async(coro):
@@ -1423,6 +1426,85 @@ def schedule_start():
         run_async(run())
     except KeyboardInterrupt:
         console.print("[yellow]Scheduler stopped[/yellow]")
+
+
+# ============== Ubuntu Audit Commands ==============
+
+@audit_app.command("run")
+def audit_run():
+    """Run the Ubuntu 24.04 LTS security audit.
+
+    Checks: CVE patch status, kernel hardening, network exposure, filesystem
+    security, user/auth config, service hardening, and secsuite network scans.
+
+    Outputs an HTML report and JSON findings to ~/.secsuite/audit_reports/
+
+    Note: Linux (Ubuntu 24.04) only.
+
+    Examples:
+
+      secsuite audit run
+    """
+    import subprocess
+    script = _audit_script("ubuntu_audit.sh")
+    if script is None:
+        raise typer.Exit(1)
+    try:
+        subprocess.run(["bash", script], check=False)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Audit interrupted.[/yellow]")
+
+
+@audit_app.command("remediate")
+def audit_remediate(
+    model: str = typer.Option("qwen2.5:7b", "--model", "-m", help="Ollama model to use"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show commands without executing"),
+    severity: Optional[str] = typer.Option(None, "--severity", "-s", help="Filter severity (CRITICAL/HIGH/MEDIUM/LOW)"),
+    findings: Optional[str] = typer.Option(None, "--findings", "-f", help="Path to findings JSON (default: latest)"),
+):
+    """LLM-driven remediation for audit findings.
+
+    Reads the latest audit findings, asks a local Ollama model to generate a
+    fix command for each finding, and prompts you to apply, skip, or edit it.
+
+    Run 'secsuite audit run' first to generate findings.
+
+    Note: Linux only. Requires Ollama running locally (ollama serve).
+
+    Examples:
+
+      secsuite audit remediate
+
+      secsuite audit remediate --dry-run
+
+      secsuite audit remediate --severity CRITICAL --model llama3.2
+    """
+    import subprocess
+    script = _audit_script("ubuntu_remediate.sh")
+    if script is None:
+        raise typer.Exit(1)
+    args = ["bash", script, "--model", model]
+    if dry_run:
+        args.append("--dry-run")
+    if severity:
+        args.extend(["--severity", severity])
+    if findings:
+        args.extend(["--findings", findings])
+    try:
+        subprocess.run(args, check=False)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Remediation session ended.[/yellow]")
+
+
+def _audit_script(name: str) -> Optional[str]:
+    """Return the absolute path to a script in the repo's scripts/ directory."""
+    import os
+    scripts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+    path = os.path.join(scripts_dir, name)
+    if not os.path.exists(path):
+        console.print(f"[red]{name} not found at {path}[/red]")
+        return None
+    return path
 
 
 # ============== REST API Server Command ==============

@@ -93,9 +93,6 @@ ubuntu_audit_*.html
 ubuntu_audit_*.log
 remediation_*.log
 
-# Local machine-specific scripts (kept outside repo, listed here as safety net)
-ubuntu_audit.sh
-ubuntu_remediate.sh
 
 # Personal / work documents — never commit
 *.pdf

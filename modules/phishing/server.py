@@ -1,7 +1,7 @@
 """Phishing server for hosting landing pages and tracking."""
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Callable
 from pathlib import Path
 
@@ -75,7 +75,7 @@ class PhishingServer:
             target = campaign.get_target_by_tracking_id(tracking_id)
             if target and not target.email_opened:
                 target.email_opened = True
-                target.opened_at = datetime.utcnow()
+                target.opened_at = datetime.now(timezone.utc)
                 self.campaign_manager.save_campaign(campaign)
                 self.logger.info(f"Email opened: {target.email} (campaign: {campaign.name})")
 
@@ -97,7 +97,7 @@ class PhishingServer:
             target = campaign.get_target_by_tracking_id(tracking_id)
             if target and not target.link_clicked:
                 target.link_clicked = True
-                target.clicked_at = datetime.utcnow()
+                target.clicked_at = datetime.now(timezone.utc)
                 self.campaign_manager.save_campaign(campaign)
                 self.logger.info(f"Link clicked: {target.email} (campaign: {campaign.name})")
 
@@ -147,7 +147,7 @@ class PhishingServer:
         target = campaign.get_target_by_tracking_id(tracking_id)
         if target and not target.credentials_submitted:
             target.credentials_submitted = True
-            target.submitted_at = datetime.utcnow()
+            target.submitted_at = datetime.now(timezone.utc)
             self.campaign_manager.save_campaign(campaign)
 
             self.logger.warning(f"Credentials submitted: {target.email} (campaign: {campaign.name})")

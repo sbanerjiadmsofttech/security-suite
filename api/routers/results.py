@@ -1,6 +1,6 @@
 """Results endpoints."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -155,7 +155,7 @@ async def get_summary(
     from api.routers.scans import scans_db
     from datetime import timedelta
     
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     
     recent_scans = [
         s for s in scans_db.values()

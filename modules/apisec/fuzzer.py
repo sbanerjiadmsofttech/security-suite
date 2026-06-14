@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 
 import httpx
 
+from core import load_wordlist
 from core.models import Target, ScanResult, Finding, Severity
 from core.logger import get_logger
 from modules.apisec.openapi_parser import ParsedAPI, APIEndpoint, APIParameter
@@ -29,6 +30,12 @@ class FuzzResult:
 
 class APIFuzzer:
     """Automated API fuzzer for security testing."""
+
+    # SecLists paths for general fuzzing strings
+    SECLISTS_FUZZ_PATHS = (
+        "Fuzzing/big-list-of-naughty-strings.txt",
+        "Fuzzing/FuzzingStrings-SkullSecurity.org.txt",
+    )
 
     # Fuzz payloads by category
     PAYLOADS = {
@@ -105,12 +112,20 @@ class APIFuzzer:
         max_requests: int = 100,
         delay: float = 0.1,
         auth_token: Optional[str] = None,
+        seclists_path: Optional[str] = None,
     ):
         self.logger = get_logger("apisec.fuzzer")
         self.timeout = timeout
         self.max_requests = max_requests
         self.delay = delay
         self.auth_token = auth_token
+        # Extend string payloads with curated SecLists naughty strings (capped at 200)
+        self._seclists_strings: list[str] = load_wordlist(
+            self.SECLISTS_FUZZ_PATHS,
+            fallback=[],
+            seclists_path=seclists_path,
+            max_entries=200,
+        )
 
     async def fuzz_api(self, api: ParsedAPI) -> ScanResult:
         """Fuzz all endpoints in an API.
@@ -226,7 +241,10 @@ class APIFuzzer:
         elif type_lower == "object":
             return self.PAYLOADS["object"]
         else:
-            return self.PAYLOADS["string"]
+            # Combine built-in payloads with SecLists payloads (deduplicated, stable order)
+            builtin = list(self.PAYLOADS["string"])
+            extra = [payload for payload in self._seclists_strings if payload not in builtin]
+            return builtin + extra
 
     async def _fuzz_parameter(
         self,

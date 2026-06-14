@@ -2,7 +2,7 @@
 
 import uuid
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
@@ -55,7 +55,7 @@ async def create_scan(
         background_tasks.add_task(execute_scan, scan_id)
     else:
         scan["status"] = "completed"
-        scan["completed_at"] = datetime.utcnow()
+        scan["completed_at"] = datetime.now(timezone.utc)
         logger.info(f"DRY-RUN scan {scan_id} for {request.target}")
     
     return ScanResponse(
@@ -184,7 +184,7 @@ async def execute_scan(scan_id: str) -> None:
     try:
         scan = scans_db[scan_id]
         scan["status"] = "running"
-        scan["started_at"] = datetime.utcnow()
+        scan["started_at"] = datetime.now(timezone.utc)
         
         logger.info(f"Starting scan {scan_id} for target {scan['target']}")
         
@@ -223,12 +223,12 @@ async def execute_scan(scan_id: str) -> None:
                     logger.error(f"Error running module {module_name}: {e}")
         
         scan["status"] = "completed"
-        scan["completed_at"] = datetime.utcnow()
+        scan["completed_at"] = datetime.now(timezone.utc)
         logger.info(f"Scan {scan_id} completed with {len(scan['findings'])} findings")
         
     except Exception as e:
         scan = scans_db[scan_id]
         scan["status"] = "failed"
         scan["error"] = str(e)
-        scan["completed_at"] = datetime.utcnow()
+        scan["completed_at"] = datetime.now(timezone.utc)
         logger.error(f"Scan {scan_id} failed: {e}")

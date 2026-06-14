@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from core.config import get_settings
+from core.wordlists import seclists_status
 from core.logger import setup_logging
 from core.models import Target
 
@@ -146,6 +147,9 @@ report_app = typer.Typer(help="Report generation")
 apisec_app = typer.Typer(help="API security testing")
 siem_app = typer.Typer(help="SIEM integration")
 schedule_app = typer.Typer(help="Scheduled scans")
+vuln_app = typer.Typer(help="Network vulnerability scanner (Al-VulnScan + Automated_VAPT)")
+threat_app = typer.Typer(help="IP threat intelligence (VirusTotal · AbuseIPDB · Shodan · OTX · GreyNoise)")
+password_app = typer.Typer(help="Password strength audit and generation")
 
 app.add_typer(osint_app, name="osint")
 app.add_typer(scan_app, name="scan")
@@ -156,6 +160,9 @@ app.add_typer(report_app, name="report")
 app.add_typer(apisec_app, name="api")
 app.add_typer(siem_app, name="siem")
 app.add_typer(schedule_app, name="schedule")
+app.add_typer(vuln_app, name="vuln")
+app.add_typer(threat_app, name="threat")
+app.add_typer(password_app, name="password")
 
 
 def run_async(coro):
@@ -817,6 +824,228 @@ def ai_correlate(
             console.print(f"  • {rec}")
 
 
+@ai_app.command("remediate")
+def ai_remediate(
+    target: str = typer.Argument(..., help="Target to scan and remediate (use 'localhost' for this machine)"),
+    provider: str = typer.Option("ollama", "--provider", "-p", help="LLM provider (ollama/anthropic/openai)"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model name (e.g. qwen2.5:7b)"),
+    base_url: Optional[str] = typer.Option(None, "--base-url", "-b", help="Ollama/custom API base URL"),
+    severity: str = typer.Option("medium", "--severity", "-s", help="Minimum severity to remediate: critical/high/medium/low"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show commands without executing"),
+    quick: bool = typer.Option(False, "--quick", "-q", help="Quick scan (fewer modules)"),
+    skip_scan: bool = typer.Option(False, "--skip-scan", help="Skip scan phase, use last cached results if available"),
+):
+    """
+    Scan a target then use a local LLM to interactively remediate findings.
+
+    Checks prerequisites for each finding before offering to execute.
+    Supports: localhost hardening, web headers, SSL, firewall, services.
+
+    Examples:
+      secsuite ai remediate localhost -p ollama -m qwen2.5:7b
+      secsuite ai remediate localhost --dry-run
+      secsuite ai remediate https://example.com -s high
+    """
+    import asyncio
+    from core.models import Severity as SevEnum
+    from modules.ai import RemediationCopilot
+
+    setup_logging()
+
+    SEV_MAP = {
+        "critical": SevEnum.CRITICAL,
+        "high":     SevEnum.HIGH,
+        "medium":   SevEnum.MEDIUM,
+        "low":      SevEnum.LOW,
+    }
+    min_sev = SEV_MAP.get(severity.lower(), SevEnum.MEDIUM)
+
+    # ── Severity colour helper ────────────────────────────────────────────────
+    SEV_STYLE = {
+        "critical": "bold red",
+        "high":     "red",
+        "medium":   "yellow",
+        "low":      "blue",
+        "info":     "dim",
+    }
+
+    # ── Scan phase ────────────────────────────────────────────────────────────
+    console.print(f"\n[bold cyan]SecSuite AI Remediation[/bold cyan] — {target}")
+    console.print(f"[dim]Provider: {provider}  Model: {model or 'auto'}  Min-severity: {severity}  Dry-run: {dry_run}[/dim]\n")
+
+    if not skip_scan:
+        if quick or target in ("localhost", "127.0.0.1"):
+            modules = ["ports", "headers", "ssl"]
+        else:
+            modules = ["dns", "headers", "tech", "ssl", "ports", "dirs"]
+
+        console.print("[cyan]Running security scan...[/cyan]")
+        results = _collect_scan_results(target, modules)
+        if not results:
+            console.print("[red]No scan results — cannot proceed with remediation.[/red]")
+            raise typer.Exit(1)
+        total_findings = sum(len(r.findings) for r in results)
+        console.print(f"[green]Scan complete — {total_findings} finding(s) across {len(results)} module(s).[/green]\n")
+    else:
+        console.print("[yellow]Skipping scan (--skip-scan). No findings loaded.[/yellow]")
+        console.print("[dim]Tip: Run without --skip-scan to scan and remediate in one step.[/dim]")
+        raise typer.Exit(0)
+
+    # ── Build copilot ─────────────────────────────────────────────────────────
+    copilot_kwargs: dict = {}
+    if model:
+        copilot_kwargs["model"] = model
+    if base_url:
+        copilot_kwargs["base_url"] = base_url
+
+    try:
+        copilot = RemediationCopilot(
+            provider=provider,
+            target=target,
+            **copilot_kwargs,
+        )
+    except ValueError as exc:
+        console.print(f"[red]LLM configuration error: {exc}[/red]")
+        raise typer.Exit(1)
+
+    # ── Generate plans ────────────────────────────────────────────────────────
+    console.print("[cyan]Generating remediation plans via LLM...[/cyan]\n")
+    try:
+        triples = run_async(copilot.plans_for_results(results, min_severity=min_sev))
+    except Exception as exc:
+        console.print(f"[red]LLM error: {exc}[/red]")
+        if "ollama" in provider.lower():
+            console.print("[dim]Is Ollama running? Try: ollama serve[/dim]")
+        raise typer.Exit(1)
+
+    if not triples:
+        console.print(f"[green]No findings at or above '{severity}' severity. Nothing to remediate.[/green]")
+        raise typer.Exit(0)
+
+    console.print(f"[bold]{len(triples)} finding(s) to remediate.[/bold]")
+    console.print("[dim]Controls:  [y] apply  [n] skip  [e] edit  [s] follow-up  [q] quit[/dim]\n")
+
+    applied = skipped = 0
+
+    for idx, (finding, prereq, plan) in enumerate(triples, 1):
+        sev_val  = finding.severity.value
+        sev_style = SEV_STYLE.get(sev_val, "white")
+
+        console.rule(f"[dim]Finding {idx}/{len(triples)}[/dim]")
+        console.print(f"  [{sev_style}][{sev_val.upper()}][/{sev_style}] [bold]{finding.title}[/bold]")
+        console.print(f"  [dim]{finding.description[:120]}[/dim]")
+        console.print()
+
+        # ── Show prerequisite results ─────────────────────────────────────────
+        if prereq.checks:
+            for chk in prereq.checks:
+                icon  = "[green]✓[/green]" if chk.met else "[red]✗[/red]"
+                label = chk.name
+                console.print(f"    {icon}  {label}" + (f"  [dim]→ {chk.hint}[/dim]" if not chk.met else ""))
+
+        if not prereq.can_autofix:
+            console.print(f"\n  [yellow]Advisory only[/yellow] — target is not localhost; review commands manually.\n")
+
+        if prereq.blocking:
+            console.print(f"\n  [red]Blocked:[/red] {', '.join(prereq.blocking)}")
+            console.print(f"  [dim]Resolve the above before this finding can be auto-fixed.[/dim]\n")
+
+        # ── Show generated plan ───────────────────────────────────────────────
+        console.print(f"  [cyan]Suggested commands ({model or 'auto'}):[/cyan]")
+        for step in plan.steps:
+            label_style = {"CHECK": "blue", "FIX": "green", "VERIFY": "cyan", "ADVISORY": "yellow", "INFO": "dim"}.get(step.label, "white")
+            console.print(f"    [{label_style}][{step.label}][/{label_style}]  {step.command}")
+        console.print()
+
+        if plan.advisory_only:
+            console.print("  [yellow]Advisory finding — no commands to execute automatically.[/yellow]\n")
+            skipped += 1
+            continue
+
+        if prereq.blocking and not dry_run:
+            console.print("  [dim]Skipping execution — prerequisites not met.[/dim]\n")
+            skipped += 1
+            continue
+
+        # ── Interactive prompt ────────────────────────────────────────────────
+        while True:
+            choice = typer.prompt(
+                "  Apply? [y/n/e/s/q]",
+                default="n",
+                show_default=False,
+            ).strip().lower()
+
+            if choice == "q":
+                console.print(f"\n[yellow]Session ended.[/yellow]  Applied={applied}  Skipped={skipped}\n")
+                raise typer.Exit(0)
+
+            elif choice == "y":
+                fix_cmds = [s.command for s in plan.steps if s.label in ("FIX", "VERIFY")]
+                if not fix_cmds:
+                    console.print("  [dim]No executable FIX steps in plan.[/dim]")
+                    skipped += 1
+                    break
+                for cmd in fix_cmds:
+                    if cmd.startswith("#"):
+                        continue
+                    console.print(f"  [dim]$ {cmd}[/dim]")
+                    if not dry_run:
+                        import subprocess as _sp
+                        result = _sp.run(cmd, shell=True, text=True, capture_output=True)
+                        if result.stdout:
+                            console.print(f"  {result.stdout.strip()}")
+                        if result.returncode != 0:
+                            console.print(f"  [red]Exit {result.returncode}:[/red] {result.stderr.strip()}")
+                        else:
+                            console.print(f"  [green]Done.[/green]")
+                    else:
+                        console.print(f"  [yellow][DRY RUN] Would execute: {cmd}[/yellow]")
+                applied += 1
+                break
+
+            elif choice == "n":
+                console.print("  [dim]Skipped.[/dim]")
+                skipped += 1
+                break
+
+            elif choice == "e":
+                new_cmd = typer.prompt("  Enter command", default="")
+                if new_cmd:
+                    console.print(f"  [dim]$ {new_cmd}[/dim]")
+                    if not dry_run:
+                        import subprocess as _sp
+                        result = _sp.run(new_cmd, shell=True, text=True, capture_output=True)
+                        console.print(result.stdout or result.stderr or "Done.")
+                    else:
+                        console.print(f"  [yellow][DRY RUN] {new_cmd}[/yellow]")
+                    applied += 1
+                break
+
+            elif choice == "s":
+                follow_up = typer.prompt("  Follow-up question")
+                console.print(f"  [dim]Asking {model or 'LLM'}...[/dim]")
+                try:
+                    from modules.ai import SecurityCopilot
+                    cp = SecurityCopilot(provider=provider, model=model, base_url=base_url)
+                    resp = run_async(cp.ask(
+                        f"Ubuntu 24.04. Finding: {finding.title}. Question: {follow_up}"
+                    ))
+                    console.print(f"\n  [cyan]{resp}[/cyan]\n")
+                except Exception as exc:
+                    console.print(f"  [red]{exc}[/red]")
+            else:
+                console.print("  [dim]Use y / n / e / s / q[/dim]")
+
+        console.print()
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    console.rule()
+    console.print(f"\n  [bold]Remediation summary[/bold]")
+    console.print(f"  [green]Applied : {applied}[/green]")
+    console.print(f"  [yellow]Skipped : {skipped}[/yellow]")
+    console.print(f"\n  [dim]Re-run audit to verify: secsuite ai remediate {target} --dry-run[/dim]\n")
+
+
 # ============== Report Commands ==============
 
 @report_app.command("html")
@@ -1196,6 +1425,54 @@ def schedule_start():
         console.print("[yellow]Scheduler stopped[/yellow]")
 
 
+# ============== REST API Server Command ==============
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host", "-H", help="Host to bind"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to bind"),
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes (dev mode)"),
+    api_key: Optional[str] = typer.Option(None, "--api-key", "-k", help="Require X-API-Key header (leave blank to allow all)"),
+):
+    """Start the REST API server.
+
+    After starting, open http://localhost:8000/docs to explore the API interactively.
+
+    Set --api-key to protect the server with a key that callers must send
+    in the X-API-Key header.
+
+    Examples:
+
+      secsuite serve
+
+      secsuite serve --port 9000 --api-key mysecretkey
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        console.print("[red]uvicorn is not installed.[/red]")
+        console.print("[dim]Run: pip install 'security-suite[dashboard]'[/dim]")
+        raise typer.Exit(1)
+
+    import os
+    if api_key:
+        os.environ["SECSUITE_API_KEY"] = api_key
+        console.print(f"[yellow]API key protection enabled.[/yellow]")
+        console.print(f"[dim]Send header: X-API-Key: {api_key}[/dim]")
+
+    console.print(f"[bold]Starting Security Suite API[/bold] on http://{host}:{port}")
+    console.print(f"[dim]Interactive docs: http://{'localhost' if host == '0.0.0.0' else host}:{port}/docs[/dim]")
+    console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+
+    uvicorn.run(
+        "api.server:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=reload,
+    )
+
+
 # ============== Dashboard Command ==============
 
 @app.command()
@@ -1254,6 +1531,482 @@ def config():
     console.print("[dim]Set API keys via environment variables:[/dim]")
     console.print("[dim]  SECSUITE_ANTHROPIC_API_KEY, SECSUITE_OPENAI_API_KEY[/dim]")
     console.print("[dim]  SECSUITE_SHODAN_API_KEY, SECSUITE_VIRUSTOTAL_API_KEY[/dim]")
+
+
+@app.command("wordlists")
+def wordlists():
+    """Show SecLists integration status and active wordlist sources."""
+    status = seclists_status()
+
+    if status["available"]:
+        console.print(Panel(
+            f"[green]SecLists detected[/green]\n{status['root']}",
+            title="Wordlist Source",
+            border_style="green",
+        ))
+    else:
+        console.print(Panel(
+            "[yellow]SecLists not detected[/yellow]\nUsing built-in fallback wordlists",
+            title="Wordlist Source",
+            border_style="yellow",
+        ))
+
+    table = Table(title="Wordlist Integrations")
+    table.add_column("Key", style="cyan")
+    table.add_column("Module", style="magenta")
+    table.add_column("Source", style="white")
+    table.add_column("Entries", justify="right", style="green")
+    table.add_column("Resolved File", style="dim")
+
+    for entry in status["entries"]:
+        source = "SecLists" if entry["source"] == "seclists" else "Fallback"
+        source_style = "[green]SecLists[/green]" if entry["source"] == "seclists" else "[yellow]Fallback[/yellow]"
+        table.add_row(
+            entry["key"],
+            entry["module"],
+            source_style,
+            str(entry["count"] or 0),
+            entry["path"] or "-",
+        )
+
+    console.print(table)
+
+
+# ============================================================
+# VULN — Network Vulnerability Scanner
+# secsuite vuln scan <target>   → quick scan, no audit trail
+# secsuite vuln vapt <target>   → full VAPT with ROE + DOCX
+# secsuite vuln list            → scan history
+# ============================================================
+
+@vuln_app.command("scan")
+def vuln_scan(
+    target: str = typer.Argument(..., help="IP, CIDR (192.168.1.0/24), range, or comma-separated IPs"),
+    profile: str = typer.Option("normal", "--profile", "-p", help="quick | normal | full | stealth"),
+    ports: Optional[str] = typer.Option(None, "--ports", help="Custom ports: 22,80,443"),
+    output_dir: str = typer.Option("reports", "--output", "-o", help="Output directory"),
+    no_ai: bool = typer.Option(False, "--no-ai", help="Skip AI analysis"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Scan a network target for open services and CVEs."""
+    setup_logging(debug=verbose)
+    from modules.vulnscan import NetworkScanner, CVELookup, ExploitSearch, RiskScorer, VulnReporter
+    from datetime import datetime
+    import json, os
+
+    custom_ports = [int(p) for p in ports.split(",") if p.strip().isdigit()] if ports else None
+    scanner = NetworkScanner(profile=profile, custom_ports=custom_ports)
+
+    console.print(f"\n[bold cyan]Network Vulnerability Scan[/bold cyan] — {target}")
+    console.print(f"[dim]Profile: {profile}[/dim]\n")
+
+    services, errors = run_async(scanner.scan(target))
+    for err in errors:
+        console.print(f"[yellow]⚠  {err}[/yellow]")
+
+    if not services:
+        console.print("[yellow]No open services found.[/yellow]")
+        return
+
+    console.print(f"[green]Found {len(services)} open service(s)[/green]\n")
+
+    cve_lookup = CVELookup()
+    exploit_search = ExploitSearch()
+    risk_scorer = RiskScorer()
+    results = []
+    total_cves = 0
+
+    for svc in services:
+        ip = svc["target_ip"]
+        port = svc["port"]
+        product = svc.get("product", "")
+        version = svc.get("version", "")
+        service_name = svc.get("name", "")
+
+        console.print(f"[cyan]{ip}:{port}[/cyan] — {product} {version}".strip())
+
+        cves = run_async(cve_lookup.lookup(product, version, service_name))
+        total_cves += len(cves)
+        risk_score, risk_level = risk_scorer.score(cves)
+        color = risk_scorer.color(risk_level)
+
+        if cves:
+            console.print(f"  CVEs: [bold]{len(cves)}[/bold] | Risk: [{color}]{risk_level} ({risk_score}/100)[/{color}]")
+            for cve in cves[:3]:
+                console.print(f"  [dim]{cve['id']} (CVSS {cve['cvss_score']}) — {cve['description'][:80]}...[/dim]")
+        else:
+            console.print(f"  [dim]No CVEs found[/dim]")
+
+        exploits = run_async(exploit_search.search(product, version, [c["id"] for c in cves]))
+        if exploits:
+            console.print(exploit_search.format_for_display(exploits))
+
+        results.append({
+            **svc,
+            "risk_score": risk_score,
+            "risk_level": risk_level,
+            "cve_details": cves,
+            "exploits": exploits,
+            "ai_analysis": "",
+            "timestamp": datetime.now().isoformat(),
+        })
+        console.print()
+
+    report_data = {
+        "scan_date": datetime.now().isoformat(),
+        "total_targets": len({s["target_ip"] for s in services}),
+        "total_services": len(services),
+        "total_cves": total_cves,
+        "results": results,
+    }
+
+    os.makedirs(output_dir, exist_ok=True)
+    reporter = VulnReporter(report_data)
+    reporter.export_json(os.path.join(output_dir, "vuln_report.json"))
+    reporter.export_markdown(os.path.join(output_dir, "vuln_report.md"))
+    reporter.export_html(os.path.join(output_dir, "vuln_report.html"))
+
+    console.print(f"\n[bold green]Scan complete.[/bold green]")
+    console.print(f"  Services: {len(services)} | CVEs: {total_cves}")
+    console.print(f"  Reports saved to: [underline]{output_dir}/[/underline]")
+
+
+@vuln_app.command("vapt")
+def vuln_vapt(
+    target: str = typer.Argument(..., help="IP, CIDR, range, or comma-separated IPs"),
+    profile: str = typer.Option("normal", "--profile", "-p",
+                               help="quick | normal | lan | full | stealth"),
+    ports: Optional[str] = typer.Option(None, "--ports"),
+    operator: str = typer.Option(..., "--operator", help="Operator name (required for audit trail)"),
+    ticket: str = typer.Option(..., "--ticket", help="Change/approval ticket ID"),
+    engagement: Optional[str] = typer.Option(None, "--engagement", help="Engagement ID"),
+    notes: Optional[str] = typer.Option(None, "--notes"),
+    allowed_cidrs: Optional[str] = typer.Option(None, "--allowed", help="Allowed CIDRs (comma-separated)"),
+    forbidden_cidrs: Optional[str] = typer.Option(None, "--forbidden", help="Forbidden CIDRs (comma-separated)"),
+    org_name: str = typer.Option("Organization", "--org"),
+    group_name: str = typer.Option("Security Team", "--group"),
+    unit_name: str = typer.Option("Internal VAPT", "--unit"),
+    output_dir: str = typer.Option("reports", "--output", "-o"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """
+    Full VAPT workflow with ROE validation, audit trail, and DOCX evidence report.
+
+    Example:
+      secsuite vuln vapt 192.168.1.0/24 --operator "John" --ticket "CHG-001"
+    """
+    setup_logging(debug=verbose)
+    from modules.vulnscan import NetworkScanner, CVELookup, ExploitSearch, RiskScorer, VulnReporter, RulesOfEngagement
+    from modules.vulnscan.scanner import expand_target
+    from datetime import datetime
+    import os
+
+    # ROE validation
+    roe = RulesOfEngagement(
+        allowed_cidrs=allowed_cidrs.split(",") if allowed_cidrs else None,
+        forbidden_cidrs=forbidden_cidrs.split(",") if forbidden_cidrs else None,
+    )
+
+    if roe.is_configured:
+        warnings, _ = roe.evaluate(expand_target(target))
+        if warnings:
+            console.print("\n[bold yellow]ROE Warnings:[/bold yellow]")
+            for w in warnings:
+                console.print(f"  [yellow]{w}[/yellow]")
+            if not typer.confirm("\nProceed despite ROE warnings?"):
+                raise typer.Abort()
+
+    console.print(f"\n[bold cyan]Automated VAPT[/bold cyan] — {target}")
+    console.print(f"[dim]Operator: {operator} | Ticket: {ticket} | Profile: {profile}[/dim]\n")
+
+    custom_ports = [int(p) for p in ports.split(",") if p.strip().isdigit()] if ports else None
+    scanner = NetworkScanner(profile=profile, custom_ports=custom_ports)
+    services, errors = run_async(scanner.scan(target))
+
+    for err in errors:
+        console.print(f"[yellow]⚠  {err}[/yellow]")
+
+    if not services:
+        console.print("[yellow]No open services found.[/yellow]")
+        return
+
+    cve_lookup = CVELookup()
+    exploit_search = ExploitSearch()
+    risk_scorer = RiskScorer()
+    results = []
+    total_cves = 0
+
+    for svc in services:
+        product = svc.get("product", "")
+        version = svc.get("version", "")
+        cves = run_async(cve_lookup.lookup(product, version, svc.get("name", "")))
+        total_cves += len(cves)
+        risk_score, risk_level = risk_scorer.score(cves)
+        exploits = run_async(exploit_search.search(product, version, [c["id"] for c in cves]))
+        color = risk_scorer.color(risk_level)
+
+        console.print(
+            f"[cyan]{svc['target_ip']}:{svc['port']}[/cyan] {product} {version} — "
+            f"[{color}]{risk_level}[/{color}] ({len(cves)} CVEs)"
+        )
+
+        results.append({
+            **svc,
+            "risk_score": risk_score,
+            "risk_level": risk_level,
+            "cve_details": cves,
+            "exploits": exploits,
+            "ai_analysis": "",
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    report_data = {
+        "scan_date": datetime.now().isoformat(),
+        "total_targets": len({s["target_ip"] for s in services}),
+        "total_services": len(services),
+        "total_cves": total_cves,
+        "scan_metadata": {
+            "operator": operator,
+            "ticket": ticket,
+            "engagement": engagement or "",
+            "notes": notes or "",
+            "profile": profile,
+        },
+        "results": results,
+    }
+
+    os.makedirs(output_dir, exist_ok=True)
+    reporter = VulnReporter(report_data)
+    reporter.export_json(os.path.join(output_dir, "vapt_report.json"))
+    reporter.export_markdown(os.path.join(output_dir, "vapt_report.md"))
+    reporter.export_html(os.path.join(output_dir, "vapt_report.html"))
+
+    try:
+        docx_path = reporter.export_docx(
+            os.path.join(output_dir, "vapt_report.docx"),
+            org_name=org_name,
+            group_name=group_name,
+            unit_name=unit_name,
+        )
+        console.print(f"  DOCX: [underline]{docx_path}[/underline]")
+    except ImportError:
+        console.print("[yellow]  DOCX skipped — install python-docx: pip install python-docx[/yellow]")
+
+    console.print(f"\n[bold green]VAPT complete.[/bold green]")
+    console.print(f"  Operator: {operator} | Ticket: {ticket}")
+    console.print(f"  Services: {len(services)} | CVEs: {total_cves}")
+    console.print(f"  Reports saved to: [underline]{output_dir}/[/underline]")
+
+
+# ============================================================
+# THREAT — IP Threat Intelligence
+# secsuite threat ip <ip>
+# secsuite threat ip --file ips.txt
+# ============================================================
+
+@threat_app.command("ip")
+def threat_ip(
+    ip: Optional[str] = typer.Argument(None, help="Single IP address to check"),
+    file: Optional[str] = typer.Option(None, "--file", "-f", help="File with one IP per line"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Save results (JSON or CSV based on --format)"),
+    fmt: str = typer.Option("table", "--format", help="Output format: table | json | csv"),
+    threshold: int = typer.Option(1, "--threshold", help="Min malicious VT vendors to flag"),
+    no_cache: bool = typer.Option(False, "--no-cache"),
+    delay: float = typer.Option(15.0, "--delay", help="Seconds between VT calls"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """
+    Multi-source IP threat intelligence.
+
+    Checks IPs against: VirusTotal, ThreatFox, AbuseIPDB, Shodan, OTX, GreyNoise.
+
+    Requires: VT_API_KEY env var (others optional).
+
+    Examples:
+      secsuite threat ip 8.8.8.8
+      secsuite threat ip --file ips.txt --format csv --output results.csv
+    """
+    setup_logging(debug=verbose)
+    from modules.threat_intel import IPThreatScanner
+    from pathlib import Path
+    import os
+
+    # Collect IPs
+    ips: list[str] = []
+    if file:
+        try:
+            ips = [ln.strip() for ln in Path(file).read_text().splitlines() if ln.strip() and not ln.startswith("#")]
+        except FileNotFoundError:
+            console.print(f"[red]File not found: {file}[/red]")
+            raise typer.Exit(1)
+    elif ip:
+        ips = [ip]
+    else:
+        console.print("[red]Provide an IP argument or --file[/red]")
+        raise typer.Exit(1)
+
+    scanner = IPThreatScanner(threshold=threshold, delay=delay)
+    sources = " · ".join(scanner.active_sources)
+    console.print(f"\n[bold cyan]IP Threat Intelligence[/bold cyan]  [dim]{sources}[/dim]")
+    console.print(f"Scanning {len(ips)} IP(s)...\n")
+
+    results = run_async(scanner.scan_many(ips))
+
+    if not results:
+        console.print("[yellow]No results returned. Check VT_API_KEY.[/yellow]")
+        return
+
+    results = scanner.sorted_by_threat(results)
+
+    if fmt == "table":
+        from rich.table import Table as RichTable
+        tbl = RichTable(title="Threat Intelligence Results", show_lines=True)
+        tbl.add_column("IP", style="cyan")
+        tbl.add_column("Status", justify="center")
+        tbl.add_column("Mal", justify="right")
+        tbl.add_column("Sus", justify="right")
+        tbl.add_column("Country")
+        tbl.add_column("AS Owner")
+        tbl.add_column("Rep", justify="right")
+
+        colors = {"malicious": "bold red", "suspicious": "bold yellow", "clean": "bold green"}
+        for r in results:
+            lvl = r.get("threat_level", "clean")
+            c = colors.get(lvl, "white")
+            tbl.add_row(
+                r["ip"], f"[{c}]{lvl.upper()}[/{c}]",
+                str(r["malicious_count"]), str(r["suspicious_count"]),
+                r["country"], r["as_owner"], str(r["reputation"]),
+            )
+        console.print(tbl)
+
+    if output:
+        if fmt == "csv":
+            scanner.to_csv(results, output)
+            console.print(f"\n[green]CSV saved: {output}[/green]")
+        else:
+            scanner.to_json(results, output)
+            console.print(f"\n[green]JSON saved: {output}[/green]")
+    elif fmt == "json":
+        import json as _json
+        console.print(_json.dumps(results, indent=2))
+
+
+# ============================================================
+# PASSWORD — Audit and Generate
+# secsuite password audit <password>
+# secsuite password generate
+# secsuite password batch --file passwords.txt
+# ============================================================
+
+@password_app.command("audit")
+def password_audit(
+    password: str = typer.Argument(..., help="Password to audit"),
+    policy: str = typer.Option("enterprise", "--policy", "-p", help="home | enterprise"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Audit a single password for strength and policy compliance."""
+    setup_logging(debug=verbose)
+    from modules.password import PasswordAuditor
+    from modules.password.auditor import PolicyMode
+
+    mode = PolicyMode.HOME if policy == "home" else PolicyMode.ENTERPRISE
+    auditor = PasswordAuditor(policy=mode)
+    result = auditor.audit(password)
+
+    color_map = {"STRONG": "green", "LOW": "blue", "MEDIUM": "yellow", "HIGH": "red", "CRITICAL": "bold red"}
+    color = color_map.get(result.risk_label, "white")
+
+    console.print(f"\n[bold]Password Audit[/bold]  (policy: {policy})")
+    console.print(f"  Length:  {result.length}")
+    console.print(f"  Entropy: {result.entropy:.1f} bits")
+    console.print(f"  Score:   {result.score}/100")
+    console.print(f"  Risk:    [{color}]{result.risk_label}[/{color}]")
+
+    char_flags = []
+    if result.has_upper: char_flags.append("UPPER")
+    if result.has_lower: char_flags.append("lower")
+    if result.has_digit: char_flags.append("123")
+    if result.has_special: char_flags.append("!@#")
+    console.print(f"  Chars:   {' '.join(char_flags) or 'none'}")
+
+    if result.is_common:
+        console.print("  [bold red]⚠  Matches a common password list[/bold red]")
+    if result.patterns_found:
+        console.print(f"  Patterns: {', '.join(result.patterns_found)}")
+
+    console.print("\n[bold]Recommendations:[/bold]")
+    for rec in result.recommendations:
+        icon = "✓" if "meets" in rec.lower() else "→"
+        color2 = "green" if "meets" in rec.lower() else "yellow"
+        console.print(f"  [{color2}]{icon} {rec}[/{color2}]")
+
+
+@password_app.command("generate")
+def password_generate(
+    length: int = typer.Option(20, "--length", "-l"),
+    count: int = typer.Option(1, "--count", "-n", help="Number of passwords to generate"),
+    passphrase: bool = typer.Option(False, "--passphrase", help="Generate passphrase instead"),
+    words: int = typer.Option(5, "--words", help="Words in passphrase"),
+    no_special: bool = typer.Option(False, "--no-special"),
+    no_digits: bool = typer.Option(False, "--no-digits"),
+    no_ambiguous: bool = typer.Option(False, "--no-ambiguous", help="Exclude lookalike chars (O,0,I,l,1)"),
+):
+    """Generate secure random passwords or passphrases."""
+    from modules.password import PasswordGenerator
+
+    console.print()
+    if passphrase:
+        for i in range(count):
+            p = PasswordGenerator.generate_passphrase(word_count=words)
+            console.print(f"  [green]{p}[/green]")
+    else:
+        for _ in range(count):
+            p = PasswordGenerator.generate(
+                length=length,
+                use_special=not no_special,
+                use_digits=not no_digits,
+                exclude_ambiguous=no_ambiguous,
+            )
+            console.print(f"  [green]{p}[/green]")
+    console.print()
+
+
+@password_app.command("batch")
+def password_batch(
+    file: str = typer.Argument(..., help="File with one password per line"),
+    policy: str = typer.Option("enterprise", "--policy", "-p"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Export path (JSON or CSV)"),
+    fmt: str = typer.Option("json", "--format", help="json | csv"),
+):
+    """Batch-audit passwords from a file. Exports metrics only (no plaintext)."""
+    from modules.password import PasswordAuditor
+    from modules.password.auditor import PolicyMode
+
+    mode = PolicyMode.HOME if policy == "home" else PolicyMode.ENTERPRISE
+    auditor = PasswordAuditor(policy=mode)
+    results = auditor.audit_file(file)
+
+    if not results:
+        console.print("[yellow]No passwords audited.[/yellow]")
+        return
+
+    risk_counts: dict[str, int] = {}
+    for r in results:
+        risk_counts[r.risk_label] = risk_counts.get(r.risk_label, 0) + 1
+
+    console.print(f"\n[bold]Batch Audit[/bold] — {len(results)} password(s)")
+    color_map = {"STRONG": "green", "LOW": "blue", "MEDIUM": "yellow", "HIGH": "red", "CRITICAL": "bold red"}
+    for label, cnt in sorted(risk_counts.items()):
+        c = color_map.get(label, "white")
+        console.print(f"  [{c}]{label}[/{c}]: {cnt}")
+
+    if output:
+        if fmt == "csv":
+            auditor.export_csv(results, output)
+        else:
+            auditor.export_json(results, output)
+        console.print(f"\n[green]Results saved: {output}[/green]")
 
 
 if __name__ == "__main__":

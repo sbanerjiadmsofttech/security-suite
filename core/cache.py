@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Any
 
@@ -26,7 +26,7 @@ class CacheEntry(BaseModel):
     
     def is_expired(self) -> bool:
         """Check if cache entry has expired."""
-        return datetime.utcnow() >= self.expires_at
+        return datetime.now(timezone.utc) >= self.expires_at
     
     def __hash__(self) -> str:
         """Get cache entry hash."""
@@ -153,12 +153,12 @@ class ScanCache:
             options: Module options used
         """
         checksum = self._compute_checksum(target, modules, options)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         entry = CacheEntry(
             target=target,
             modules=modules,
-            result_data=result.dict(),
+            result_data=result.model_dump(),
             created_at=now,
             expires_at=now + timedelta(seconds=self.ttl),
             checksum=checksum,
@@ -171,7 +171,7 @@ class ScanCache:
         cache_path = self._get_cache_path(checksum)
         try:
             with open(cache_path, 'w') as f:
-                json.dump(entry.dict(), f, default=str, indent=2)
+                json.dump(entry.model_dump(), f, default=str, indent=2)
                 logger.debug(f"Cached result for {target} (checksum={checksum[:8]})")
         except Exception as e:
             logger.error(f"Error writing cache file {cache_path}: {e}")
@@ -185,7 +185,7 @@ class ScanCache:
         Returns:
             Number of entries cleared
         """
-        cleared = 0
+        cleared_checksums: set[str] = set()
         
         # Clear memory cache
         if target:
@@ -195,9 +195,9 @@ class ScanCache:
             ]
             for k in keys_to_delete:
                 del self._memory_cache[k]
-                cleared += 1
+                cleared_checksums.add(k)
         else:
-            cleared = len(self._memory_cache)
+            cleared_checksums.update(self._memory_cache.keys())
             self._memory_cache.clear()
         
         # Clear disk cache
@@ -208,13 +208,14 @@ class ScanCache:
                         data = json.load(f)
                         if data.get("target") == target:
                             cache_file.unlink()
-                            cleared += 1
+                            cleared_checksums.add(cache_file.stem)
                 else:
                     cache_file.unlink()
-                    cleared += 1
+                    cleared_checksums.add(cache_file.stem)
         except Exception as e:
             logger.error(f"Error clearing disk cache: {e}")
         
+        cleared = len(cleared_checksums)
         logger.info(f"Cleared {cleared} cache entries for target={target or 'all'}")
         return cleared
     
@@ -266,10 +267,12 @@ class ScanCache:
         except Exception as e:
             logger.error(f"Error counting disk cache: {e}")
         
+        total_entries = max(memory_entries, disk_entries)
+
         return {
             "memory_entries": memory_entries,
             "disk_entries": disk_entries,
-            "total_entries": memory_entries + disk_entries,
+            "total_entries": total_entries,
             "cache_directory": str(self.cache_dir),
             "ttl_seconds": self.ttl,
         }

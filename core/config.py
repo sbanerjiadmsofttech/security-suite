@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     app_name: str = "Security Suite"
     debug: bool = False
     data_dir: Path = Field(default=Path.home() / ".secsuite")
+    seclists_path: Optional[Path] = None
 
     # API Keys (optional)
     shodan_api_key: Optional[str] = None

@@ -3,6 +3,7 @@
 from core.config import Settings, get_settings
 from core.logger import get_logger
 from core.models import Target, ScanResult, Severity
+from core.wordlists import CATALOG, load_wordlist, resolve_seclists_path, seclists_status
 
 __all__ = [
     "Settings",
@@ -11,4 +12,8 @@ __all__ = [
     "Target",
     "ScanResult",
     "Severity",
+    "CATALOG",
+    "load_wordlist",
+    "resolve_seclists_path",
+    "seclists_status",
 ]

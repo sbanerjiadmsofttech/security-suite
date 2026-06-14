@@ -49,7 +49,7 @@ class JSONExporter(BaseExporter):
             JSON string
         """
         data = {
-            "target": self.result.target.dict(),
+            "target": self.result.target.model_dump(),
             "module": self.result.module,
             "success": self.result.success,
             "started_at": self.result.started_at.isoformat() if self.result.started_at else None,

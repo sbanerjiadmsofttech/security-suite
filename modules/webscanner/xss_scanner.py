@@ -4,6 +4,7 @@ import re
 from typing import Optional
 from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 
+from core import load_wordlist
 from core.models import Target, ScanResult, Severity
 from core.http_client import HTTPClient
 from modules.webscanner.base import WebScannerModule
@@ -15,7 +16,13 @@ class XSSScanner(WebScannerModule):
     name = "xss"
     description = "Test for reflected and DOM-based XSS vulnerabilities"
 
-    # Test payloads - benign probes that don't execute
+    SECLISTS_RELATIVE_PATHS = (
+        "Fuzzing/XSS/robot-friendly/XSS-Jhaddix.txt",
+        "Fuzzing/XSS/robot-friendly/XSS-RSNAKE.txt",
+        "Fuzzing/XSS/robot-friendly/XSS-BruteLogic.txt",
+    )
+
+    # Built-in fallback payloads (benign probes that don't execute)
     PAYLOADS = [
         '<script>alert(1)</script>',
         '"><script>alert(1)</script>',
@@ -37,9 +44,17 @@ class XSSScanner(WebScannerModule):
         r'javascript:alert',
     ]
 
-    def __init__(self, custom_payloads: Optional[list[str]] = None):
+    def __init__(
+        self,
+        custom_payloads: Optional[list[str]] = None,
+        seclists_path: Optional[str] = None,
+    ):
         super().__init__()
-        self.payloads = custom_payloads or self.PAYLOADS
+        self.payloads = custom_payloads or load_wordlist(
+            self.SECLISTS_RELATIVE_PATHS,
+            fallback=self.PAYLOADS,
+            seclists_path=seclists_path,
+        )
 
     async def run(self, target: Target) -> ScanResult:
         """Scan target for XSS vulnerabilities."""

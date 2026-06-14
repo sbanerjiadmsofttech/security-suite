@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 
 import httpx
 
+from core import load_wordlist
 from core.models import Target, ScanResult, Finding, Severity
 from core.logger import get_logger
 from modules.apisec.openapi_parser import ParsedAPI, APIEndpoint
@@ -25,7 +26,12 @@ class AuthTestResult:
 class APIAuthTester:
     """Authentication security tester for APIs."""
 
-    # Common weak JWT secrets
+    # SecLists paths for JWT secret wordlists
+    SECLISTS_JWT_PATHS = (
+        "Passwords/scraped-JWT-secrets.txt",
+    )
+
+    # Common weak JWT secrets (built-in fallback)
     WEAK_JWT_SECRETS = [
         "secret",
         "password",
@@ -47,9 +53,16 @@ class APIAuthTester:
         {"X-Real-IP": "127.0.0.1"},
     ]
 
-    def __init__(self, timeout: float = 10.0):
+    def __init__(self, timeout: float = 10.0, seclists_path: Optional[str] = None):
         self.logger = get_logger("apisec.auth_tester")
         self.timeout = timeout
+        # Load JWT secrets: SecLists file if available, else built-in fallback
+        self.jwt_secrets: list[str] = load_wordlist(
+            self.SECLISTS_JWT_PATHS,
+            fallback=self.WEAK_JWT_SECRETS,
+            seclists_path=seclists_path,
+            max_entries=500,
+        )
 
     async def test_api_auth(self, api: ParsedAPI) -> ScanResult:
         """Test API authentication security.

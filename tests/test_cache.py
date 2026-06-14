@@ -2,7 +2,7 @@
 
 import pytest
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from core.cache import ScanCache, CacheEntry
 from core.models import Target, ScanResult, Finding, Severity
@@ -14,7 +14,15 @@ def temp_cache(tmp_path):
     cache = ScanCache(ttl_seconds=3600)
     cache.cache_dir = tmp_path / "cache"
     cache.cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache
+    cache._memory_cache.clear()  # Clear memory cache before test
+    # Clear any existing cache files
+    for cache_file in cache.cache_dir.glob("*.json"):
+        cache_file.unlink()
+    yield cache
+    cache._memory_cache.clear()  # Clear memory cache after test
+    # Clean up cache files after test
+    for cache_file in cache.cache_dir.glob("*.json"):
+        cache_file.unlink()
 
 
 @pytest.fixture
@@ -125,7 +133,7 @@ class TestCacheEntry:
     
     def test_cache_entry_expiration(self):
         """Test cache entry expiration check."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         # Not expired
         entry = CacheEntry(

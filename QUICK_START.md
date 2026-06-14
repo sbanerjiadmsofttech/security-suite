@@ -1,333 +1,184 @@
-# Quick Start Guide - New Features
+# Quick Start — Security Suite
 
-## 📚 Documentation Files
-
-Read these in order to understand what was added:
-
-1. **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Overview of all new features
-2. **[ARCHITECTURE.md](ARCHITECTURE.md)** - Deep dive into system design
-3. **[README.md](README.md)** - Original project documentation
-4. **[USAGE.md](USAGE.md)** - Command-line usage examples
+This guide gets you from zero to running your first scan in under 10 minutes.
 
 ---
 
-## 🚀 Quick Demos
+## Step 1 — Install
 
-### Demo 1: REST API
+Run the setup script for your operating system. It handles everything automatically.
 
-Start the API:
+**Linux / macOS**
 ```bash
+git clone https://github.com/53cur3dL34rn/security-suite.git
+cd security-suite
+bash setup.sh
+```
+
+**Windows (PowerShell)**
+```powershell
+git clone https://github.com/53cur3dL34rn/security-suite.git
+cd security-suite
+powershell -ExecutionPolicy Bypass -File setup.ps1
+```
+
+The script will:
+- Install Python 3.11 if you don't have it
+- Install Git if you don't have it
+- Create a virtual environment (an isolated Python sandbox for this project)
+- Install all dependencies
+- Install Ollama (so you can use AI features without an API key)
+- Download a small AI model (~2 GB)
+- Create your `.env` configuration file
+
+---
+
+## Step 2 — Activate the environment
+
+Every time you open a new terminal, you need to activate the virtual environment first.
+
+**Linux / macOS**
+```bash
+cd security-suite
 source venv/bin/activate
-python -c "
-from api.server import create_app
-import uvicorn
-uvicorn.run(create_app(), host='0.0.0.0', port=8000)
-"
 ```
 
-In another terminal, test endpoints:
-```bash
-# Health check
-curl http://localhost:8000/health
-
-# List available modules
-curl http://localhost:8000/api/v1/modules
-
-# Create a scan (with dry-run)
-curl -X POST http://localhost:8000/api/v1/scans \
-  -H "Content-Type: application/json" \
-  -d '{"target": "example.com", "modules": ["dns"], "dry_run": true}'
-
-# Get scan details (use scan ID from response)
-curl http://localhost:8000/api/v1/scans/{SCAN_ID}
+**Windows PowerShell**
+```powershell
+cd security-suite
+.\venv\Scripts\Activate.ps1
 ```
 
-### Demo 2: Caching
+You'll know it's active when you see `(venv)` at the start of your terminal prompt.
+
+---
+
+## Step 3 — Confirm it works
 
 ```bash
-python3 -c "
-from core.cache import get_cache
-from core.models import Target, ScanResult
-
-cache = get_cache()
-
-# Check cache stats
-print('Cache Stats:', cache.get_stats())
-
-# View cache location
-import os
-cache_dir = cache.cache_dir
-print(f'Cache Directory: {cache_dir}')
-print(f'Cache Files: {list(cache_dir.glob(\"*.json\"))[:5]}')
-"
+secsuite --help
 ```
 
-### Demo 3: Export Formats
+You should see a list of commands. If you get a "command not found" error, make sure
+you completed Step 2.
+
+---
+
+## Your First 5 Minutes
+
+Try these in order to see what the tool can do.
+
+### 1. Look up a domain
 
 ```bash
-python3 -c "
-from core.models import Target, ScanResult, Finding, Severity
-from core.exporters import export_result
-from pathlib import Path
-
-# Create sample result
-target = Target.from_string('example.com')
-result = ScanResult(target=target, module='test')
-
-finding = Finding(
-    title='Test Finding',
-    description='A sample security finding',
-    severity=Severity.HIGH,
-    source='demo',
-)
-result.findings.append(finding)
-
-# Export to different formats
-print('JSON:', export_result(result, 'json')[:100] + '...')
-print('CSV:', export_result(result, 'csv')[:100] + '...')
-print('HTML:', export_result(result, 'html')[:100] + '...')
-
-# Save to files
-export_result(result, 'html', Path('/tmp/report.html'))
-print('HTML report saved to /tmp/report.html')
-"
+secsuite osint dns example.com
 ```
 
-### Demo 4: Error Handling
+This checks DNS records — what IP addresses the domain points to, its mail servers,
+name servers, and SPF/DMARC email security settings.
+
+Expected output:
+```
+DNS Enumeration: example.com
+
+╭──────────────────── [INFO] IPv4 Addresses Found ─────────────────────╮
+│ Domain resolves to 2 IPv4 address(es)                                │
+╰───────────────────────────────────────────────────────────────────────╯
+  addresses: ['104.18.27.120', '104.18.26.120']
+
+╭──────────────────── [INFO] Mail Servers Found ───────────────────────╮
+│ Found 1 mail server(s)                                               │
+╰───────────────────────────────────────────────────────────────────────╯
+
+Completed in 0.68s
+```
+
+### 2. Check a website's security headers
 
 ```bash
-python3 -c "
-from core.tools import ToolManager
-from core.exceptions import ToolNotFoundError
-
-# Check if nmap is available
-try:
-    ToolManager.check_tool('nmap')
-    print('✓ nmap is available')
-except ToolNotFoundError as e:
-    print(f'✗ {e}')
-
-# Check non-existent tool with fallback
-available = ToolManager.check_tool('nonexistent_tool', raise_error=False)
-print(f'Nonexistent tool available: {available}')
-"
+secsuite osint headers https://example.com
 ```
 
----
+This checks whether the website sets the security headers that browsers expect
+(things that prevent clickjacking, content sniffing attacks, etc.).
 
-## 📊 Running Tests
+### 3. Check SSL/TLS
 
-Run all tests with coverage:
 ```bash
-source venv/bin/activate
-pytest --cov=core --cov=modules tests/ -v
+secsuite scan ssl example.com
 ```
 
-Run specific test file:
+This checks whether the SSL certificate is valid, which versions of TLS are
+enabled, and whether any known weak protocols (like SSLv3 or TLS 1.0) are on.
+
+### 4. Ask the AI a security question
+
 ```bash
-pytest tests/test_cache.py -v
+secsuite ai ask "What is SQL injection and how do I prevent it?" --provider ollama --model llama3.2
 ```
 
-View HTML coverage report:
+This uses the local AI model that was installed in Step 1 — no internet connection
+or API key needed.
+
+### 5. Start the interactive web interface
+
 ```bash
-pytest --cov=core tests/
-open htmlcov/index.html
+secsuite serve
 ```
+
+Then open your browser and go to: **http://localhost:8000/docs**
+
+You'll see an interactive page that lists every API endpoint. You can click on any
+endpoint, fill in the inputs, and click "Execute" to run it — no code needed.
 
 ---
 
-## 📁 File Structure Overview
+## Common Command Patterns
 
-### New Directories
-```
-api/                           # NEW REST API implementation
-├── __init__.py
-├── server.py                  # FastAPI app factory
-├── models.py                  # Pydantic models
-└── routers/                   # API endpoint handlers
-    ├── __init__.py
-    ├── health.py
-    ├── scans.py
-    ├── results.py
-    └── modules.py
-
-core/                          # Core infrastructure (expanded)
-├── cache.py                   # NEW Caching system
-├── exceptions.py              # NEW Exception classes
-├── exporters.py               # NEW Export functionality
-├── tools.py                   # NEW Tool management
-├── (existing files)
-└── ...
-
-tests/                         # Test suite (expanded)
-├── test_cache.py              # NEW Cache tests
-├── test_exporters.py          # NEW Export tests
-├── test_error_handling.py      # NEW Error handling tests
-├── (existing files)
-└── ...
-```
-
-### New Documentation
-```
-IMPLEMENTATION_SUMMARY.md      # NEW Feature overview
-ARCHITECTURE.md                # NEW System design
-QUICK_START.md                 # THIS FILE
-```
-
----
-
-## 🔧 Configuration
-
-### Cache Configuration
-
-Set cache TTL via environment:
 ```bash
-export SECSUITE_DEBUG=true
-# Cache directory: ~/.secsuite/cache/
-# Default TTL: 24 hours
-```
+# Always specify a target (domain, IP, or URL)
+secsuite osint dns <target>
+secsuite scan ssl <target>
+secsuite ai analyze <target> --provider ollama --model llama3.2
 
-### API Configuration
+# Add --verbose to see more detail
+secsuite osint dns example.com --verbose
 
-Change API host/port:
-```python
-uvicorn.run(app, host="127.0.0.1", port=8080)
-```
-
----
-
-## 💡 Usage Examples
-
-### Example 1: Use API Programmatically
-
-```python
-import httpx
-import asyncio
-
-async def create_and_monitor_scan():
-    async with httpx.AsyncClient() as client:
-        # Create scan
-        response = await client.post(
-            "http://localhost:8000/api/v1/scans",
-            json={"target": "example.com", "modules": ["dns", "whois"]}
-        )
-        scan = response.json()
-        scan_id = scan["id"]
-        
-        # Monitor progress
-        for _ in range(5):
-            response = await client.get(f"http://localhost:8000/api/v1/scans/{scan_id}")
-            status = response.json()["status"]
-            print(f"Status: {status}")
-            await asyncio.sleep(2)
-
-asyncio.run(create_and_monitor_scan())
-```
-
-### Example 2: Export Scan Results
-
-```python
-from core.exporters import export_result
-from core.models import Target, ScanResult
-from pathlib import Path
-
-# Assuming you have a scan_result...
-result = ScanResult(target=Target.from_string("example.com"), module="osint")
-
-# Export to all formats
-for fmt in ["json", "csv", "html", "markdown"]:
-    file_path = Path(f"report.{fmt if fmt != 'markdown' else 'md'}")
-    export_result(result, fmt, file_path)
-    print(f"✓ Exported to {file_path}")
-```
-
-### Example 3: Check External Tools
-
-```python
-from core.tools import ToolManager
-from core.exceptions import ToolNotFoundError
-
-required_tools = ["nmap", "whois", "dig"]
-
-for tool in required_tools:
-    try:
-        if ToolManager.check_tool(tool):
-            print(f"✓ {tool} is available")
-    except ToolNotFoundError:
-        print(f"✗ {tool} is NOT available - install it to use this module")
+# Save a report to a file
+secsuite report html example.com -o my_report.html
+secsuite report json example.com -o my_report.json
 ```
 
 ---
 
-## 🐛 Troubleshooting
+## What the REST API is for
 
-### Issue: API won't start
-```
-Check if port 8000 is in use:
-lsof -i :8000
-Kill process: kill -9 <PID>
-Or use different port: uvicorn app --port 8001
-```
+The `secsuite serve` command starts a web server that lets you:
 
-### Issue: Cache not working
-```
-Check cache directory:
-ls ~/.secsuite/cache/
+- Trigger scans from any programming language or tool (curl, Postman, Python, etc.)
+- Retrieve results in JSON format for use in other systems
+- Use the interactive `/docs` page to explore and run any scan without writing code
 
-Clear cache:
-rm -rf ~/.secsuite/cache/*
-```
-
-### Issue: Tests failing
-```
-Ensure venv is activated:
-source venv/bin/activate
-
-Run with verbose output:
-pytest -vv tests/test_cache.py
-
-Check Python version:
-python --version  # Should be 3.10+
-```
+Think of it as a way to use Security Suite as a building block in your own projects,
+or just as a more visual way to run scans.
 
 ---
 
-## 📝 Commit History
+## Troubleshooting
 
-```
-b3d596d - docs: Add implementation summary
-a601320 - fix: Fix test fixtures and exporters
-adf9826 - feat: Implement major recommendations
-aac7be7 - Initial commit: SecSuite v0.1.0
-```
+Something not working? See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for fixes to
+the most common problems, including Windows-specific issues.
 
 ---
 
-## 🎯 Next Steps
+## Next Steps
 
-1. **Try the REST API** - Start the server and explore endpoints
-2. **Review Architecture** - Read ARCHITECTURE.md for system design
-3. **Run Tests** - Verify everything works with pytest
-4. **Extend Features** - Add authentication, database integration
-5. **Deploy** - Follow production checklist in ARCHITECTURE.md
-
----
-
-## 📞 Feature Reference
-
-| Feature | File | Status |
-|---------|------|--------|
-| REST API | `api/` | ✅ Complete |
-| Error Handling | `core/exceptions.py`, `core/tools.py` | ✅ Complete |
-| Caching | `core/cache.py` | ✅ Complete |
-| Export Formats | `core/exporters.py` | ✅ Complete |
-| Tests | `tests/` | ✅ Complete |
-| Architecture Docs | `ARCHITECTURE.md` | ✅ Complete |
-| Dry-Run Mode | - | ⏳ Not Started |
-| Database Integration | - | ⏳ Not Started |
-| API Authentication | - | ⏳ Not Started |
-
----
-
-**Last Updated**: February 9, 2026  
-**Version**: 0.2.0 (with recommended enhancements)
+| Goal | Command |
+|------|---------|
+| Full OSINT scan | `secsuite osint full example.com` |
+| Scan a web app for XSS | `secsuite scan xss "https://example.com/search?q=test"` |
+| Test your API | `secsuite api scan http://localhost:8000/openapi.json` |
+| Port scan | `secsuite osint ports 192.168.1.1` |
+| See all available commands | `secsuite --help` |
+| See help for a specific command | `secsuite osint --help` |
+| Full documentation | [USAGE.md](USAGE.md) |

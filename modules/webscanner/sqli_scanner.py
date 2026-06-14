@@ -4,6 +4,7 @@ import re
 from typing import Optional
 from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 
+from core import load_wordlist
 from core.models import Target, ScanResult, Severity
 from core.http_client import HTTPClient
 from modules.webscanner.base import WebScannerModule
@@ -15,7 +16,12 @@ class SQLiScanner(WebScannerModule):
     name = "sqli"
     description = "Test for SQL injection vulnerabilities"
 
-    # Error-based detection payloads
+    SECLISTS_RELATIVE_PATHS = (
+        "Fuzzing/Databases/SQLi/quick-SQLi.txt",
+        "Fuzzing/Databases/SQLi/Generic-SQLi.txt",
+    )
+
+    # Built-in fallback error-based detection payloads
     PAYLOADS = [
         "'",
         "''",
@@ -68,9 +74,17 @@ class SQLiScanner(WebScannerModule):
         r"syntax error at or near",
     ]
 
-    def __init__(self, custom_payloads: Optional[list[str]] = None):
+    def __init__(
+        self,
+        custom_payloads: Optional[list[str]] = None,
+        seclists_path: Optional[str] = None,
+    ):
         super().__init__()
-        self.payloads = custom_payloads or self.PAYLOADS
+        self.payloads = custom_payloads or load_wordlist(
+            self.SECLISTS_RELATIVE_PATHS,
+            fallback=self.PAYLOADS,
+            seclists_path=seclists_path,
+        )
         self.error_patterns = [re.compile(p, re.IGNORECASE) for p in self.ERROR_PATTERNS]
 
     async def run(self, target: Target) -> ScanResult:

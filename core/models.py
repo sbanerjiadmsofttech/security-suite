@@ -1,6 +1,6 @@
 """Shared data models for Security Suite."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -54,7 +54,7 @@ class Finding(BaseModel):
     severity: Severity = Severity.INFO
     source: str = Field(..., description="Module/tool that produced this finding")
     data: dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     references: list[str] = Field(default_factory=list)
 
 
@@ -64,7 +64,7 @@ class ScanResult(BaseModel):
     target: Target
     module: str = Field(..., description="Module that performed the scan")
     success: bool = True
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: Optional[datetime] = None
     findings: list[Finding] = Field(default_factory=list)
     raw_data: dict[str, Any] = Field(default_factory=dict)
@@ -92,7 +92,7 @@ class ScanResult(BaseModel):
 
     def complete(self) -> None:
         """Mark the scan as complete."""
-        self.completed_at = datetime.utcnow()
+        self.completed_at = datetime.now(timezone.utc)
 
     @property
     def duration_seconds(self) -> Optional[float]:

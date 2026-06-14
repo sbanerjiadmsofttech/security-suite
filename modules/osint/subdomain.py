@@ -5,6 +5,7 @@ from typing import Optional
 
 import dns.asyncresolver
 
+from core import load_wordlist
 from core.models import Target, ScanResult, Severity
 from modules.osint.base import OSINTModule
 
@@ -14,6 +15,11 @@ class SubdomainScanner(OSINTModule):
 
     name = "subdomain"
     description = "Discover subdomains via DNS bruteforce and public sources"
+
+    SECLISTS_RELATIVE_PATHS = (
+        "Discovery/DNS/subdomains-top1million-5000.txt",
+        "Discovery/DNS/subdomains-top1million-20000.txt",
+    )
 
     COMMON_SUBDOMAINS = [
         "www", "mail", "ftp", "webmail", "smtp", "pop", "ns1", "ns2",
@@ -29,9 +35,18 @@ class SubdomainScanner(OSINTModule):
         "aws", "cloud", "s3", "backup", "mobile", "m",
     ]
 
-    def __init__(self, wordlist: Optional[list[str]] = None, max_concurrent: int = 20):
+    def __init__(
+        self,
+        wordlist: Optional[list[str]] = None,
+        max_concurrent: int = 20,
+        seclists_path: Optional[str] = None,
+    ):
         super().__init__()
-        self.wordlist = wordlist or self.COMMON_SUBDOMAINS
+        self.wordlist = wordlist or load_wordlist(
+            self.SECLISTS_RELATIVE_PATHS,
+            fallback=self.COMMON_SUBDOMAINS,
+            seclists_path=seclists_path,
+        )
         self.max_concurrent = max_concurrent
 
     async def run(self, target: Target) -> ScanResult:

@@ -24,10 +24,37 @@ class PortScanner(OSINTModule):
 
     TOP_1000_PORTS = "1-1000"
 
-    def __init__(self, ports: Optional[str] = None, scan_type: str = "default"):
+    # Scan type presets
+    SCAN_PRESETS = {
+        "quick": {"flags": ["-T4", "-F"], "description": "Fast scan of common ports"},
+        "full": {"flags": ["-T4", "-p-"], "description": "Scan all 65535 ports"},
+        "default": {"flags": ["-T4", "-p", "1-1000"], "description": "Top 1000 ports"},
+        "aggressive": {"flags": ["-T4", "-A", "-sV", "-sC"], "description": "Aggressive scan with OS detection and scripts"},
+        "intense": {"flags": ["-T4", "-p-", "-A"], "description": "Intense scan: all ports + aggressive options"},
+        "light": {"flags": ["-T5", "-p", "1-1000"], "description": "Light, fast scan"},
+        "comprehensive": {"flags": ["-T3", "-p-", "-sV", "-sC", "-O"], "description": "Comprehensive scan with OS detection"},
+    }
+
+    def __init__(
+        self,
+        ports: Optional[str] = None,
+        scan_type: str = "default",
+        enable_os_detection: bool = False,
+        enable_scripts: bool = False,
+        udp_scan: bool = False,
+        timing_template: int = 3,
+        service_version: bool = True,
+        ping_before_scan: bool = True,
+    ):
         super().__init__()
         self.ports = ports
         self.scan_type = scan_type
+        self.enable_os_detection = enable_os_detection
+        self.enable_scripts = enable_scripts
+        self.udp_scan = udp_scan
+        self.timing_template = max(0, min(5, timing_template))  # Clamp between 0-5
+        self.service_version = service_version
+        self.ping_before_scan = ping_before_scan
         self.nmap_available = shutil.which("nmap") is not None
 
     async def run(self, target: Target) -> ScanResult:
@@ -60,14 +87,29 @@ class PortScanner(OSINTModule):
         try:
             cmd = ["nmap", "-oX", output_file]
 
-            if self.scan_type == "quick":
-                cmd.extend(["-T4", "-F"])
-            elif self.scan_type == "full":
-                cmd.extend(["-T4", "-p-"])
+            # Build nmap command based on scan type and options
+            if self.scan_type in self.SCAN_PRESETS:
+                cmd.extend(self.SCAN_PRESETS[self.scan_type]["flags"])
             else:
-                cmd.extend(["-T4", "-p", self.ports or self.TOP_1000_PORTS])
+                # Use custom port specification
+                cmd.extend([f"-T{self.timing_template}", "-p", self.ports or self.TOP_1000_PORTS])
 
-            cmd.append("-sV")
+            # Add optional flags
+            if self.service_version and "-sV" not in cmd:
+                cmd.append("-sV")
+
+            if self.enable_os_detection:
+                cmd.append("-O")
+
+            if self.enable_scripts and "-sC" not in cmd:
+                cmd.append("-sC")
+
+            if self.udp_scan:
+                cmd.append("-sU")
+
+            if not self.ping_before_scan:
+                cmd.append("-Pn")
+
             cmd.append(host)
 
             self.logger.info(f"Running: {' '.join(cmd)}")
@@ -100,11 +142,20 @@ class PortScanner(OSINTModule):
 
             open_ports = []
             services = []
+            os_detection = {}
 
             for host in root.findall(".//host"):
                 status = host.find("status")
                 if status is not None and status.get("state") != "up":
                     continue
+
+                # Parse OS detection if available
+                osmatch = host.find(".//osmatch")
+                if osmatch is not None:
+                    os_detection = {
+                        "name": osmatch.get("name", "Unknown"),
+                        "accuracy": osmatch.get("accuracy", "0"),
+                    }
 
                 for port in host.findall(".//port"):
                     state = port.find("state")
@@ -123,12 +174,16 @@ class PortScanner(OSINTModule):
                             service_info["service"] = service_elem.get("name", "unknown")
                             service_info["product"] = service_elem.get("product", "")
                             service_info["version"] = service_elem.get("version", "")
+                            service_info["extrainfo"] = service_elem.get("extrainfo", "")
 
                         open_ports.append(int(port_id))
                         services.append(service_info)
 
             result.raw_data["open_ports"] = open_ports
             result.raw_data["services"] = services
+
+            if os_detection:
+                result.raw_data["os_detection"] = os_detection
 
             if open_ports:
                 result.add_finding(
@@ -155,6 +210,15 @@ class PortScanner(OSINTModule):
                         severity=Severity.MEDIUM,
                         data={"services": found_risky},
                     )
+
+            # Add OS detection finding if available
+            if os_detection:
+                result.add_finding(
+                    title="Operating System Detected",
+                    description=f"Detected OS: {os_detection['name']} (Accuracy: {os_detection['accuracy']}%)",
+                    severity=Severity.INFO,
+                    data=os_detection,
+                )
 
         except ET.ParseError as e:
             result.errors.append(f"Failed to parse nmap output: {e}")

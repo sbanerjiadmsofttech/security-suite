@@ -3,6 +3,7 @@
 import asyncio
 from typing import Optional
 
+from core import load_wordlist
 from core.models import Target, ScanResult, Severity
 from core.http_client import HTTPClient
 from modules.webscanner.base import WebScannerModule
@@ -13,6 +14,10 @@ class DirectoryBruteforcer(WebScannerModule):
 
     name = "dirbrute"
     description = "Discover hidden directories and files"
+    SECLISTS_RELATIVE_PATHS = (
+        "Discovery/Web-Content/common.txt",
+        "Discovery/Web-Content/common_directories.txt",
+    )
 
     COMMON_PATHS = [
         # Directories
@@ -49,9 +54,14 @@ class DirectoryBruteforcer(WebScannerModule):
         wordlist: Optional[list[str]] = None,
         extensions: Optional[list[str]] = None,
         max_concurrent: int = 20,
+        seclists_path: Optional[str] = None,
     ):
         super().__init__()
-        self.wordlist = wordlist or self.COMMON_PATHS
+        self.wordlist = wordlist or load_wordlist(
+            self.SECLISTS_RELATIVE_PATHS,
+            fallback=self.COMMON_PATHS,
+            seclists_path=seclists_path,
+        )
         self.extensions = extensions or ["", ".php", ".html", ".txt", ".bak", ".old"]
         self.max_concurrent = max_concurrent
 

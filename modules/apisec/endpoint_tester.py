@@ -8,6 +8,7 @@ from urllib.parse import urljoin
 
 import httpx
 
+from core import load_wordlist
 from core.models import Target, ScanResult, Finding, Severity
 from core.logger import get_logger
 from modules.apisec.openapi_parser import ParsedAPI, APIEndpoint
@@ -25,6 +26,16 @@ class EndpointTestResult:
 
 class APIEndpointTester:
     """Security tester for API endpoints."""
+
+    # SecLists paths for injection payload categories
+    SECLISTS_LFI_PATHS = (
+        "Fuzzing/LFI/LFI-Jhaddix.txt",
+        "Fuzzing/LFI/LFI-gracefulsecurity-linux.txt",
+    )
+    SECLISTS_CMDI_PATHS = (
+        "Fuzzing/command-injection-commix.txt",
+        "Fuzzing/UnixAttacks.fuzzdb.txt",
+    )
 
     # BOLA/IDOR test IDs
     IDOR_TEST_IDS = ["1", "2", "999", "0", "-1", "admin", "test", "../1"]
@@ -44,7 +55,7 @@ class APIEndpointTester:
         '{"$where": "1==1"}',
     ]
 
-    # Command injection payloads
+    # Fallback command injection payloads
     CMDI_PAYLOADS = [
         "; ls",
         "| cat /etc/passwd",
@@ -60,16 +71,37 @@ class APIEndpointTester:
         "http://[::1]",
     ]
 
+    # Fallback LFI payloads
+    LFI_PAYLOADS = [
+        "../../../etc/passwd",
+        "..\\..\\..\\windows\\system32\\config\\sam",
+        "../../../../etc/shadow",
+        "/etc/passwd",
+    ]
+
     def __init__(
         self,
         timeout: float = 10.0,
         auth_header: Optional[str] = None,
         auth_token: Optional[str] = None,
+        seclists_path: Optional[str] = None,
     ):
         self.logger = get_logger("apisec.endpoint_tester")
         self.timeout = timeout
         self.auth_header = auth_header
         self.auth_token = auth_token
+        # Load LFI and command injection payloads from SecLists when available
+        self.lfi_payloads: list[str] = load_wordlist(
+            self.SECLISTS_LFI_PATHS,
+            fallback=self.LFI_PAYLOADS,
+            seclists_path=seclists_path,
+        )
+        self.cmdi_payloads: list[str] = load_wordlist(
+            self.SECLISTS_CMDI_PATHS,
+            fallback=self.CMDI_PAYLOADS,
+            seclists_path=seclists_path,
+            max_entries=100,
+        )
 
     async def test_api(self, api: ParsedAPI) -> ScanResult:
         """Test all endpoints in an API.
@@ -334,6 +366,24 @@ class APIEndpointTester:
             for payload in self.SQLI_PAYLOADS[:2]:
                 finding = await self._test_injection(
                     client, base_url, endpoint, headers, param.name, payload, "SQL"
+                )
+                if finding:
+                    findings.append(finding)
+                    break
+
+            # Test command injection (SecLists-backed when available)
+            for payload in self.cmdi_payloads[:5]:
+                finding = await self._test_injection(
+                    client, base_url, endpoint, headers, param.name, payload, "Command"
+                )
+                if finding:
+                    findings.append(finding)
+                    break
+
+            # Test LFI / path traversal (SecLists-backed when available)
+            for payload in self.lfi_payloads[:5]:
+                finding = await self._test_injection(
+                    client, base_url, endpoint, headers, param.name, payload, "LFI"
                 )
                 if finding:
                     findings.append(finding)

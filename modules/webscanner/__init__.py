@@ -1,17 +1,24 @@
 """Web security scanner module."""
 
-from modules.webscanner.crawler import WebCrawler
-from modules.webscanner.xss_scanner import XSSScanner
-from modules.webscanner.sqli_scanner import SQLiScanner
-from modules.webscanner.dir_bruteforce import DirectoryBruteforcer
-from modules.webscanner.ssl_analyzer import SSLAnalyzer
-from modules.webscanner.nuclei import NucleiScanner
+from importlib import import_module
+from typing import Any
 
-__all__ = [
-    "WebCrawler",
-    "XSSScanner",
-    "SQLiScanner",
-    "DirectoryBruteforcer",
-    "SSLAnalyzer",
-    "NucleiScanner",
-]
+_MODULE_MAP = {
+    "WebCrawler": "modules.webscanner.crawler",
+    "XSSScanner": "modules.webscanner.xss_scanner",
+    "SQLiScanner": "modules.webscanner.sqli_scanner",
+    "DirectoryBruteforcer": "modules.webscanner.dir_bruteforce",
+    "SSLAnalyzer": "modules.webscanner.ssl_analyzer",
+    "NucleiScanner": "modules.webscanner.nuclei",
+}
+
+__all__ = list(_MODULE_MAP)
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily import scanner classes when accessed."""
+    if name not in _MODULE_MAP:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    module = import_module(_MODULE_MAP[name])
+    return getattr(module, name)

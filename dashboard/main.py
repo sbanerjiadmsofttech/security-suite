@@ -10,7 +10,8 @@ templates = Jinja2Templates(directory="dashboard/templates")
 
 @app.get("/")
 async def root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    # This updated syntax fixes the 'unhashable type: dict' error
+    return templates.TemplateResponse(request=request, name="index.html")
 
 @app.post("/api/v1/scans")
 async def create_scan(request: dict):

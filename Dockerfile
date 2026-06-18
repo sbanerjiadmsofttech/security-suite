@@ -25,3 +25,5 @@ RUN pip install -e .
 # Expose ports for both services
 EXPOSE 8000
 EXPOSE 8080
+# Force uvicorn to call your factory function
+CMD ["uvicorn", "dashboard.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8080"]

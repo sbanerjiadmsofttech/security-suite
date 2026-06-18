@@ -58,12 +58,15 @@ class DashboardApp:
     def _setup_routes(self):
         """Map visual paths to rendered Jinja2 templates."""
         
-        @self.app.get("/", response_class=HTMLResponse)
-        async def render_index(request: Request):
-            # Manually load and render the template to bypass the Starlette 3.14 cache bug
-            template = self.templates.env.get_template("index.html")
-            rendered_content = template.render({"request": request, "status": "Operational"})
-            return HTMLResponse(content=rendered_content)
+        # Point the API route directly to the class method below
+        self.app.add_api_route("/", self.render_index, methods=["GET"], response_class=HTMLResponse)
+
+    # Move the function out so it is a direct method of the DashboardApp class
+    async def render_index(self, request: Request):
+        # Manually load and render the template to bypass the Starlette 3.14 cache bug
+        template = self.templates.env.get_template("index.html")
+        rendered_content = template.render({"request": request, "status": "Operational"})
+        return HTMLResponse(content=rendered_content)
         # 2. Force FastAPI to register the root path explicitly directly on the app instance
         self.app.add_api_route("/", render_index, methods=["GET"], response_class=HTMLResponse)
     async def run(self):
@@ -82,4 +85,9 @@ class DashboardApp:
 def create_app():
     """Factory function for the CLI / Uvicorn server entry point."""
     dashboard_instance = DashboardApp()
+    # 👇 ADD THIS TEMPORARY DEBUG BLOCK 👇
+    print("\n=== LIVE FASTAPI ROUTE MAP ===")
+    for route in dashboard_instance.app.routes:
+        print(f"Path: {route.path} | Name: {route.name} | Methods: {getattr(route, 'methods', 'N/A')}")
+    print("===============================\n")
     return dashboard_instance.app

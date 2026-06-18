@@ -1,10 +1,13 @@
 services:
   web:
     build: .
-    container_name: secsuite_ui_dashboard
-    ports:
-      - "8080:8080"
-    volumes:
-      - .:/app
-    environment:
-      - PYTHONPATH=/app
+    command: uvicorn dashboard.main:app --host 0.0.0.0 --port 8000 --reload
+    ports: ["8000:8000"]
+    volumes: [.:/app]
+  redis:
+    image: redis:alpine
+  worker:
+    build: .
+    command: celery -A dashboard.tasks worker --loglevel=info
+    volumes: [.:/app]
+    depends_on: [redis]

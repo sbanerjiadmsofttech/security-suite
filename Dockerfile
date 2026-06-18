@@ -2,21 +2,19 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install necessary Linux compilation dependencies
+# 1. Install system compilation utilities AND the core network-scanning engine
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
+    nmap \
     && rm -rf /var/lib/apt/lists/*
 
-# 👇 1. Copy the native Python packaging configuration files
-COPY pyproject.toml ./
-
-# 👇 2. Install the suite's dependencies and missing modules directly via pip
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir . ollama typer
-
-# 3. Copy the rest of the security suite workspace repository structures
+# 2. Copy the full project workspace structure first
 COPY . .
+
+# 3. Upgrade pip and install the platform natively including its optional dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir ".[all]" ollama
 
 ENV PYTHONPATH=/app
 EXPOSE 8080

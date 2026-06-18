@@ -4,8 +4,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-# --- IMPORT YOUR ACTUAL ENGINE ---
+# Import the orchestrator AND the guardrails system
 from modules.orchestrator.loop import RedBlueOrchestrator 
+from core.guardrails import guardrails
 
 app = FastAPI(title="Security Suite Dashboard")
 
@@ -24,23 +25,37 @@ async def run_scan(payload: ScanRequest):
     domain_to_scan = payload.target
     
     try:
-        # --- THE REAL SCAN INITIATION ---
-        # 1. Initialize your orchestrator
+        # 1. Satisfy the Guardrails (Required by loop.py)
+        # We create a temporary session for the dashboard user
+        guardrails.create_session(
+            operator="DashboardUser", 
+            engagement_id="DASH-100", 
+            target_scope=[domain_to_scan]
+        )
+        
+        # 2. Initialize the orchestrator
         orchestrator = RedBlueOrchestrator()
         
-        # 2. Run the actual scan loop (this will take time!)
-        # Assuming your run() method returns a report or string
-        scan_report = orchestrator.run(domain_to_scan) 
+        # 3. AWAIT the run command
+        scan_report = await orchestrator.run(
+            target=domain_to_scan,
+            mode="recon_only" # Let's start with a fast, safe mode to prove it works!
+        ) 
         
+        # 4. Clean up the session
+        guardrails.end_session()
+        
+        # 5. Send the successful JSON back to the UI
         return JSONResponse({
             "status": "success", 
             "target": domain_to_scan,
-            "message": str(scan_report) # Send the real AI output to the screen
+            # We must use .to_dict() because loop.py returns a dataclass object
+            "message": scan_report.to_dict() 
         })
         
     except Exception as e:
-        # If the AI or scan fails, tell the user gracefully
+        # If it crashes, tell the UI exactly why (e.g., "PermissionError: No active session")
         return JSONResponse({
             "status": "error",
-            "message": f"Orchestrator Error: {str(e)}"
+            "message": f"Orchestrator crashed: {str(e)}"
         }, status_code=500)

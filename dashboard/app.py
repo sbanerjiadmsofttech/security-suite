@@ -24,3 +24,12 @@ async def execute_scan(target: str):
     orchestrator = RedBlueOrchestrator(profile="default")
     report = await orchestrator.run(target=target)
     return {"status": "success", "data": report}
+
+@app.get("/", response_class=HTMLResponse)
+async def render_dashboard_home(request: Request):
+    # Pass the request and any other data inside the 'context' dictionary
+    return templates.TemplateResponse(
+        request=request, 
+        name="index.html", 
+        context={"request": request}
+    )

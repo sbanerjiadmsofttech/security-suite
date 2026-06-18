@@ -1,5 +1,1 @@
-"""Web Dashboard for Security Suite."""
-
-from dashboard.app import create_app, DashboardApp
-
-__all__ = ["create_app", "DashboardApp"]
+from dashboard.app import app, create_app

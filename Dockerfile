@@ -2,20 +2,20 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# 👇 1. Install necessary Linux system build dependencies cleanly
+# Install necessary Linux compilation dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Copy package requirements first
-COPY requirements.txt .
+# 👇 1. Copy the native Python packaging configuration files
+COPY pyproject.toml ./
 
-# 3. Upgrade pip and install requirements
+# 👇 2. Install the suite's dependencies and missing modules directly via pip
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir . ollama typer
 
-# 4. Copy all repository structures inside the app workspace
+# 3. Copy the rest of the security suite workspace repository structures
 COPY . .
 
 ENV PYTHONPATH=/app

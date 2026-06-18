@@ -30,7 +30,7 @@ async def run_scan(payload: ScanRequest):
         
         # 2. Run the actual scan loop (this will take time!)
         # Assuming your run() method returns a report or string
-        scan_report = await orchestrator.run(domain_to_scan) 
+        scan_report = orchestrator.run(domain_to_scan) 
         
         return JSONResponse({
             "status": "success", 

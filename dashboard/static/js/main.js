@@ -1,41 +1,53 @@
 document.addEventListener("DOMContentLoaded", () => {
     const actionButton = document.getElementById("test-btn");
     const targetInput = document.getElementById("target-url");
-    const terminalLog = document.getElementById("terminal-log");
+    const statusIndicator = document.getElementById("status-indicator");
+    const resultsWorkspace = document.getElementById("results-workspace");
+    const tableBody = document.getElementById("findings-table-body");
     
-    if (actionButton && targetInput && terminalLog) {
+    if (actionButton && targetInput) {
         actionButton.addEventListener("click", async () => {
-            const selectedTarget = targetInput.value.trim();
-            if (!selectedTarget) return alert("Please specify a target domain!");
+            const target = targetInput.value.trim();
+            if (!target) return alert("Please input a target domain.");
 
-            // 1. Update terminal display frame state to loading
+            // Set loading display states
             actionButton.disabled = true;
-            actionButton.innerText = "Scanning...";
-            terminalLog.innerHTML = `<span style="color: #38bdf8;">[Pipeline Initiated] Contacting FastAPI scan orchestration pipeline for: ${selectedTarget}...</span>`;
+            statusIndicator.innerText = "[+] SecSuite Orchestrator initializing scan channels...";
+            resultsWorkspace.style.display = "none";
+            tableBody.innerHTML = "";
 
             try {
-                // 2. Dispatch real asynchronous background HTTP network request 
                 const response = await fetch("/api/scan", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target: selectedTarget })
+                    body: JSON.stringify({ target: target })
                 });
 
-                if (!response.ok) throw new Error("Backend engine network pipeline connection drop error.");
                 const data = await response.json();
+                statusIndicator.innerText = `[✓] ${data.summary}`;
 
-                // 3. Render out the response data loops back onto the dashboard UI
-                terminalLog.innerHTML = "";
-                data.logs.forEach(logLine => {
-                    terminalLog.innerHTML += `<div style="margin-bottom: 5px; color: #a7f3d0;">${logLine}</div>`;
-                });
-                terminalLog.innerHTML += `<hr style="border-color: #334155; margin: 10px 0;"><div style="color: #34d399; font-weight: bold;">${data.summary}</div>`;
+                if (data.findings && data.findings.length > 0) {
+                    // Loop over each finding object inside the report array maps
+                    data.findings.forEach(finding => {
+                        const row = `
+                            <tr style="border-bottom: 1px solid #33354a; color: #cbd5e1;">
+                                <td style="padding: 10px; font-weight: bold;">${finding.id || 'N/A'}</td>
+                                <td style="padding: 10px;">${finding.title || 'Component Flaw Detected'}</td>
+                                <td style="padding: 10px; color: #a7f3d0;">${finding.remediation || 'No immediate configuration patch defined.'}</td>
+                            </tr>
+                        `;
+                        tableBody.innerHTML += row;
+                    });
+                } else {
+                    tableBody.innerHTML = `<tr><td colspan="3" style="padding: 15px; text-align: center; color: #94a3b8;">No structural risk points flagged by the scanning engine profiles.</td></tr>`;
+                }
+                
+                resultsWorkspace.style.display = "block";
 
-            } catch (error) {
-                terminalLog.innerHTML = `<span style="color: #f87171;">[Error] Command string sequence aborted: ${error.message}</span>`;
+            } catch (err) {
+                statusIndicator.innerText = `[!] System Execution Fault: ${err.message}`;
             } finally {
                 actionButton.disabled = false;
-                actionButton.innerText = "Execute Scan";
             }
         });
     }

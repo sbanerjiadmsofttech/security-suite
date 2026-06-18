@@ -1,30 +1,25 @@
-# 1. Start with a lean Python runtime
 FROM python:3.12-slim
 
-# 2. Set the work directory
 WORKDIR /app
 
-# 3. Install system-level tools (nmap is required for your vulnscan modules)
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
     nmap \
     && rm -rf /var/lib/apt/lists/*
 
-# 4. Copy your project code into the container
+# Copy everything from your local directory to the /app directory
 COPY . .
 
-# 5. Upgrade pip and install the package with all necessary runtime dependencies
-# This ensures that uvicorn and fastapi are installed in the same Python environment 
-# as the main application
+# Install dependencies including jinja2 and essential web tools
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir . fastapi uvicorn
+    pip install --no-cache-dir . fastapi uvicorn jinja2 aiofiles python-multipart
 
-# 6. Set the path so that modules are discoverable
+# Set the path to the root so FastAPI can find the 'dashboard' package
 ENV PYTHONPATH=/app
 
-# 7. Expose the dashboard port
 EXPOSE 8080
 
-# 8. Start the application using the explicit module path
+# Use the python module execution to avoid path issues
 CMD ["python", "-m", "uvicorn", "dashboard.app:app", "--host", "0.0.0.0", "--port", "8080"]

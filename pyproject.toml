@@ -38,6 +38,7 @@ dependencies = [
     "python-nmap>=0.7.1",
     # threat_intel module (Virustotal Scanner)
     "requests>=2.31.0",
+    "ollama>=0.2.0",
 ]
 
 [project.optional-dependencies]

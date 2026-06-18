@@ -64,7 +64,8 @@ class DashboardApp:
             template = self.templates.env.get_template("index.html")
             rendered_content = template.render({"request": request, "status": "Operational"})
             return HTMLResponse(content=rendered_content)
-
+        # 2. Force FastAPI to register the root path explicitly directly on the app instance
+        self.app.add_api_route("/", render_index, methods=["GET"], response_class=HTMLResponse)
     async def run(self):
         """Launch uvicorn programmatically in sync loop context."""
         import uvicorn

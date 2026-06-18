@@ -1,30 +1,10 @@
 services:
-  # Core REST API Engine
-  api-core:
-    build: .
-    container_name: secsuite_api_core
-    command: python cli/main.py serve
-    volumes:
-      - .:/app
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env  # <--- Automatically injects everything from your base folder .env file
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: unless-stopped
-
-  # UI Presentation Layer Panel
-  ui-dashboard:
+  web:
     build: .
     container_name: secsuite_ui_dashboard
-    command: python cli/main.py dashboard
-    volumes:
-      - .:/app
     ports:
       - "8080:8080"
-    env_file:
-      - .env  # <--- Ensures the UI panel shares the same environment context
-    depends_on:
-      - api-core
-    restart: unless-stopped
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONPATH=/app

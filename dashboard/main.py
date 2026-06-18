@@ -1,28 +1,29 @@
-from fastapi import FastAPI, Request
+import uuid
+from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from dashboard.tasks import run_security_task
-import uuid
+from dashboard.tasks import execute_security_scan
 
-app = FastAPI(title="Security Suite Dashboard")
+app = FastAPI(title="Security Suite Pro")
 app.mount("/static", StaticFiles(directory="dashboard/static"), name="static")
 templates = Jinja2Templates(directory="dashboard/templates")
 
-@app.get("/")
+scan_db = {} # In-production, use Redis or a DB
+
+@app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
-    # This updated syntax fixes the 'unhashable type: dict' error
     return templates.TemplateResponse(request=request, name="index.html")
 
 @app.post("/api/v1/scans")
-async def create_scan(request: dict):
+async def create_scan(request: Request, background_tasks: BackgroundTasks):
+    data = await request.json()
     scan_id = str(uuid.uuid4())
-    run_security_task.apply_async(
-        args=[request['target'], request['modules'], request.get('dry_run', False)],
-        task_id=scan_id
-    )
-    return {"id": scan_id, "status": "pending"}
+    scan_db[scan_id] = {"status": "pending", "results": []}
+    
+    background_tasks.add_task(execute_security_scan, scan_id, data['target'], data['modules'])
+    return {"id": scan_id}
 
 @app.get("/api/v1/scans/{scan_id}")
-async def get_scan_status(scan_id: str):
-    task = run_security_task.AsyncResult(scan_id)
-    return {"id": scan_id, "status": task.status, "result": task.result}
+async def get_status(scan_id: str):
+    return scan_db.get(scan_id, {"status": "not_found"})

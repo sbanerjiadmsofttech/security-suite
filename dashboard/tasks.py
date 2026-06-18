@@ -1,15 +1,19 @@
-from celery import Celery
 import time
+import logging
 
-# Celery instance pointing to Redis
-celery_app = Celery("tasks", broker="redis://redis:6379/0", backend="redis://redis:6379/0")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-@celery_app.task(bind=True)
-def run_security_task(self, target: str, modules: list, dry_run: bool):
-    if dry_run:
-        return {"status": "dry_run", "target": target}
+def execute_security_scan(scan_id: str, target: str, modules: list):
+    logger.info(f"Scan {scan_id} started for {target}")
+    time.sleep(5) # Orchestrator Simulation
     
-    # This is where you would import your actual scan modules
-    # e.g., from modules.osint import DNSEnumerator
-    time.sleep(15)  # Simulating long-running scan
-    return {"status": "completed", "target": target, "findings": "Found 3 open ports, 1 subdomain."}
+    findings = [
+        {"title": "Open Port 80", "severity": "yellow", "details": "HTTP detected"},
+        {"title": "SQL Injection", "severity": "red", "details": "Vulnerability found"},
+        {"title": "TLS 1.2", "severity": "green", "details": "Configured"}
+    ]
+    
+    from dashboard.main import scan_db
+    scan_db[scan_id] = {"status": "completed", "results": findings}
+    logger.info(f"Scan {scan_id} finished")

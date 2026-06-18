@@ -1,50 +1,39 @@
-document.addEventListener('DOMContentLoaded', () => {
-    const scanBtn = document.getElementById('scan-btn');
-    const targetInput = document.getElementById('target-domain');
-    const workspace = document.getElementById('results-workspace');
+async function startScan() {
+    const target = document.getElementById('target').value;
+    const res = await fetch('/api/v1/scans', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({target: target, modules: ['osint']})
+    });
+    const data = await res.json();
+    
+    // UI Feedback
+    const container = document.getElementById('results');
+    container.innerHTML = '<p class="text-blue-500">Scan in progress...</p>';
+    
+    const interval = setInterval(async () => {
+        const poll = await fetch(`/api/v1/scans/${data.id}`);
+        const status = await poll.json();
+        if (status.status === 'completed') {
+            clearInterval(interval);
+            renderResults(status.results);
+        }
+    }, 2000);
+}
 
-    if (scanBtn) {
-        scanBtn.addEventListener('click', async () => {
-            const target = targetInput.value.trim();
-            
-            // 1. Validation check
-            if (!target) {
-                workspace.innerHTML = `<span style='color: #f44336;'>[ERROR]</span> Please enter a valid domain or IP address.`;
-                return;
-            }
-
-            // 2. Lock UI and show progress
-            scanBtn.disabled = true;
-            targetInput.disabled = true;
-            scanBtn.innerText = "Scanning...";
-            workspace.innerHTML = `<span style='color: #ff9800;'>[SYSTEM] Booting AI Engine...<br>[TARGET] Analyzing ${target}...</span>`;
-
-            try {
-                // 3. Send the target to the backend
-                const response = await fetch('/api/scan', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ target: target }) // Sending the domain here!
-                });
-
-                const data = await response.json();
-
-                // 4. Render the output
-                if (response.ok) {
-                    workspace.innerHTML = `<span style='color: #4caf50;'>[SUCCESS]</span> Scan completed for <strong>${data.target}</strong>.<br><br>[OUTPUT]<br>${data.message}`;
-                } else {
-                    // Handle validation errors from FastAPI (like missing fields)
-                    workspace.innerHTML = `<span style='color: #f44336;'>[ERROR]</span> Server returned status ${response.status}: ${JSON.stringify(data.detail)}`;
-                }
-            } catch (error) {
-                console.error("Fetch error:", error);
-                workspace.innerHTML = `<span style='color: #f44336;'>[NETWORK ERROR]</span> Could not connect to backend engine.`;
-            } finally {
-                // 5. Unlock UI
-                scanBtn.disabled = false;
-                targetInput.disabled = false;
-                scanBtn.innerText = "Initialize Scan";
-            }
-        });
-    }
-});
+function renderResults(results) {
+    const container = document.getElementById('results');
+    // Map severity to Tailwind border classes
+    const colors = { 
+        'red': 'border-red-500', 
+        'yellow': 'border-yellow-500', 
+        'green': 'border-green-500' 
+    };
+    
+    container.innerHTML = results.map(r => `
+        <div class="p-3 mb-2 border-l-4 ${colors[r.severity] || 'border-gray-500'} bg-white shadow-sm rounded">
+            <span class="font-bold text-gray-800">${r.title}</span> 
+            <p class="text-sm text-gray-600">${r.details}</p>
+        </div>
+    `).join('');
+}

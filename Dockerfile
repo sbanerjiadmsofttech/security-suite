@@ -22,4 +22,4 @@ ENV PYTHONPATH=/app
 EXPOSE 8080
 
 # Use the python module execution to avoid path issues
-CMD ["python", "-m", "uvicorn", "dashboard.app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "uvicorn", "dashboard.main:app", "--host", "0.0.0.0", "--port", "8080"]

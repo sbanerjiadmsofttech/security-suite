@@ -535,3 +535,5 @@ This tool is intended for **authorized security testing and educational purposes
 ## License
 
 AGPL-3.0 — see [LICENSE](LICENSE).
+#   s e c u r i t y - s u i t e  
+ 

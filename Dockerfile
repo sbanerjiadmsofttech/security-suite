@@ -14,7 +14,7 @@ COPY . .
 
 # Install dependencies including jinja2 and essential web tools
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir . fastapi uvicorn jinja2 aiofiles python-multipart
+    pip install --no-cache-dir . fastapi uvicorn jinja2 aiofiles python-multipart celery redis
 
 # Set the path to the root so FastAPI can find the 'dashboard' package
 ENV PYTHONPATH=/app

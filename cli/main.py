@@ -170,7 +170,11 @@ app.add_typer(audit_app, name="audit")
 
 def run_async(coro):
     """Run async function in sync context."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    try:
+        return asyncio.run(coro)
+    except RuntimeError:
+        # Fallback if an event loop is already running in the background
+        return asyncio.get_event_loop().run_until_complete(coro)
 
 
 def display_result(result):
